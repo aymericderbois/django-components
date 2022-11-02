@@ -1,10 +1,11 @@
 import warnings
 from functools import lru_cache
+from typing import Optional
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.forms.widgets import MediaDefiningClass
-from django.template.base import Node, TokenType
+from django.template.base import Node, TokenType, Template
 from django.template.loader import get_template
 from django.utils.safestring import mark_safe
 
@@ -49,6 +50,7 @@ class SimplifiedInterfaceMediaDefiningClass(MediaDefiningClass):
 
 class Component(metaclass=SimplifiedInterfaceMediaDefiningClass):
     template_name = None
+    template_string: Optional[str] = None
 
     def __init__(self, component_name):
         self._component_name = component_name
@@ -98,10 +100,19 @@ class Component(metaclass=SimplifiedInterfaceMediaDefiningClass):
         )
 
     @lru_cache(maxsize=TEMPLATE_CACHE_SIZE)
-    def get_processed_template(self, template_name):
+    def get_processed_template(self, template_name=None, template_string=None):
         """Retrieve the requested template and check for unused slots."""
 
-        component_template = get_template(template_name).template
+        if template_name is None and template_string is None:
+            raise ImproperlyConfigured(
+                f"Template name or template string is not set for Component"
+                f"{self.__class__.__name__}"
+            )
+
+        if template_string:
+            component_template = Template(template_string)
+        else:
+            component_template = get_template(template_name).template
 
         # Traverse template nodes and descendants
         visited_nodes = set()
@@ -137,6 +148,9 @@ class Component(metaclass=SimplifiedInterfaceMediaDefiningClass):
                 DeprecationWarning,
             )
 
+        template_name = None
+        template_string = None
+
         if hasattr(self, "template"):
             warnings.warn(
                 f"{self.__class__.__name__}: `template` method is deprecated, \
@@ -144,10 +158,15 @@ class Component(metaclass=SimplifiedInterfaceMediaDefiningClass):
                 DeprecationWarning,
             )
             template_name = self.template(context)
+        elif self.template_string:
+            template_string = self.template_string
         else:
             template_name = self.get_template_name(context)
 
-        instance_template = self.get_processed_template(template_name)
+        instance_template = self.get_processed_template(
+            template_name=template_name,
+            template_string=template_string,
+        )
         with context.update({ACTIVE_SLOT_CONTEXT_KEY: self.slots}):
             return instance_template.render(context)
 
